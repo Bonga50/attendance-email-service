@@ -1,10 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 import { RRule } from "https://cdn.skypack.dev/rrule?dts";
-import {
-  addMonths,
-  subMonths,
-} from "https://cdn.skypack.dev/date-fns@2.21.1?dts";
 import { CalendarEvent } from "https://cdn.skypack.dev/angular-calendar?dts";
+import { addMonths, subMonths } from "https://cdn.skypack.dev/date-fns@2.21.1?dts";
 
 const handler = async (req: Request): Promise<Response> => {
   try {
