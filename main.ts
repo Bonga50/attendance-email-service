@@ -5,8 +5,8 @@ import { addMonths, subMonths } from "https://esm.sh/date-fns@2.21.1";
 
 const handler = async (req: Request): Promise<Response> => {
     try {
-        
-    const { supabaseUrl, supabaseKey, resendApiKey, backendUrl } =
+
+    const { supabaseUrl, supabaseKey, resendApiKey, backendUrl,senderEmail } =
       await req.json();
 
     if (!supabaseUrl || !supabaseKey || !resendApiKey || !backendUrl) {
@@ -363,7 +363,7 @@ const handler = async (req: Request): Promise<Response> => {
           </table>
         `;
     };
-
+    console.log(eventsByTeacher);
     for (const [
       teacherEmail,
       { name: teacherName, events: teacherEvents, id: teacherID },
@@ -416,7 +416,7 @@ const handler = async (req: Request): Promise<Response> => {
           Authorization: `Bearer ${resendApiKey}`,
         },
         body: JSON.stringify({
-          from: "team@jushumans.co.za",
+          from: senderEmail,
           to: teacherEmail,
           subject: "Roll Call - Attendance Missing",
           html: htmlContent,
