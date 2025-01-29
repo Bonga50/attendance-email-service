@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+//import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 // import { RRule } from "https://esm.sh/rrule";
 // import { CalendarEvent } from "https://esm.sh/angular-calendar";
 // import { addMonths, subMonths } from "https://esm.sh/date-fns@2.21.1";
