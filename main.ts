@@ -3,287 +3,47 @@ import { RRule } from "https://esm.sh/rrule";
 import { CalendarEvent } from "https://esm.sh/angular-calendar";
 import { addMonths, subMonths } from "https://esm.sh/date-fns@2.21.1";
 
-const handler = async (req: Request): Promise<Response> => {
-    try {
 
-    const { supabaseUrl, supabaseKey, resendApiKey, backendUrl,senderEmail } =
+// Rest of your existing code...
+const today = new Date();
+const todayStart = new Date(today.setHours(0, 0, 0, 0)).toISOString();
+const todayEnd = new Date(today.setHours(23, 59, 59, 999)).toISOString();
+let earliestStartTime: any;
+let latestEndTime: any;
+let storedEvents: any[] = [];
+const eventsByTeacher: Record<
+  string,
+  { name: string; events: any[]; id?: string }
+> = {};
+let supabase = null
+const handler = async (req: Request): Promise<Response> => {
+  try {
+    const { supabaseUrl, supabaseKey, resendApiKey, backendUrl, senderEmail } =
       await req.json();
 
     if (!supabaseUrl || !supabaseKey || !resendApiKey || !backendUrl) {
       throw new Error("Missing required environment variables");
     }
+    console.log("started");
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
-    // Rest of your existing code...
-    const today = new Date();
-    const todayStart = new Date(today.setHours(0, 0, 0, 0)).toISOString();
-    const todayEnd = new Date(today.setHours(23, 59, 59, 999)).toISOString();
-    let earliestStartTime: any;
-    let latestEndTime: any;
-    let storedEvents: any[] = [];
-    const eventsByTeacher: Record<
-      string,
-      { name: string; events: any[]; id?: string }
-    > = {};
-
+    supabase = createClient(supabaseUrl, supabaseKey);
+    if (!supabase) {
+      throw new Error("Missing supabase client configuration");
+    }
+    console.log("fetching", backendUrl);
     // Fetch the events from the API
     const eventRes = await fetch(`${backendUrl}api/GoogleCalendar`);
-    console.log(eventRes)
+    console.log(eventRes);
     if (!eventRes.ok) {
       console.error(`Fetch request failed with status: ${eventRes.status}`);
       return new Response("Failed to fetch event data", {
-        status: eventRes.status,
+        status: eventRes.status
       });
     }
 
-    // Create a calendar event object.
-    const createCalendarEvent = (
-        event: any,
-        start?: Date,
-        end?: Date
-      ): CalendarEvent => {
-        start = start ?? new Date(event.start.dateTime);
-        end = end ?? new Date(event.end.dateTime);
-
-        updateEventTimes(start, end);
-
-        return {
-          start: start ?? new Date(event.start.dateTime),
-          end: end ?? new Date(event.end.dateTime),
-          title: event.summary ?? "",
-          meta: {
-            location: event.location ?? "",
-            teacherName:
-              event.extendedProperties?.private?.teacher?.split("|")[1] ?? "",
-            teacherEmail:
-              event.extendedProperties?.private?.teacher?.split("|")[0] ?? "",
-            subjects: event.extendedProperties?.private?.subject ?? "",
-            grade: event.extendedProperties?.private?.grade ?? "",
-            event_id: event.id ?? "",
-            event_title: event.summary ?? "",
-            event_type: event.extendedProperties?.private?.eventType ?? "",
-            isRecurring: event.recurrence ? true : false,
-            capacity: event.extendedProperties?.private?.capacity ?? "",
-            isDeleted: event.status === "cancelled" ? true : false,
-            originalStartDate: event.start.dateTime,
-            originalEndDate: event.end.dateTime,
-            instanceDate: start ?? new Date(event.start.dateTime),
-            attendees: event.attendees
-              ? event.attendees.map((attendee: any) => ({
-                  email: attendee.email,
-                  name: attendee.displayName,
-                  responseStatus: attendee.responseStatus,
-                }))
-              : [],
-            startTime: start ?? new Date(event.start.dateTime),
-            endTime: end ?? new Date(event.end.dateTime),
-            eventType: event.extendedProperties.private.eventType ?? "",
-            originalEvent: event,
-            timeZone: event.end.timeZone,
-            gradeName: event.extendedProperties.private.grade,
-          },
-        };
-      };
-
-      // Update earliest and latest event times.
-      const updateEventTimes = (start: Date, end: Date): void => {
-        const eventStartTime = start.getHours(); // Get event start hour.
-        const eventEndTime = end.getHours(); // Get event end hour.
-        if (eventStartTime < earliestStartTime) {
-          earliestStartTime = eventStartTime; // Update earliest start time if necessary.
-        }
-        if (eventEndTime > latestEndTime) {
-          latestEndTime = eventEndTime; // Update latest end time if necessary.
-        }
-      };
-
-      // Check if two dates have the same date and time.
-      const isSameDateTime = (date1: Date, date2: Date): boolean => {
-        return (
-          date1.getFullYear() === date2.getFullYear() &&
-          date1.getMonth() === date2.getMonth() &&
-          date1.getDate() === date2.getDate() &&
-          date1.getHours() === date2.getHours() &&
-          date1.getMinutes() === date2.getMinutes()
-        );
-      };
-
-      const processEvents = async (events: any[]): Promise<void> => {
-        console.log(events.length);
-        const recurringEvents = events.filter((event) => event.recurrence); // Filter recurring events.
-        const exceptionEvents = events.filter(
-          (event) => event.recurringEventId && event.status !== "cancelled"
-        ); // Filter exception events.
-        const cancelledEvents = events.filter(
-          (event) => event.status === "cancelled" && event.recurringEventId
-        ); // Filter cancelled events.
-
-        const oneMonthBack = subMonths(new Date(), 1);
-        const sixMonthsForward = addMonths(new Date(), 6);
-
-        recurringEvents.forEach((event) => {
-          const eventStart = new Date(event.start.dateTime);
-          const ruleString = event.recurrence[0];
-          const rule = new RRule({
-            ...RRule.parseString(ruleString),
-            dtstart: eventStart < oneMonthBack ? oneMonthBack : eventStart, // Use oneMonthBack only if eventStart is earlier than oneMonthBack
-            until: sixMonthsForward,
-          });
-
-          // Override the `until` date if it exists in the rule itself and is before the sixMonthsForward limit
-          const ruleOptions = RRule.parseString(ruleString);
-          const ruleUntilDate = ruleOptions.until;
-
-          const finalUntilDate =
-            ruleUntilDate && ruleUntilDate < sixMonthsForward
-              ? ruleUntilDate
-              : sixMonthsForward;
-          rule.options.until = finalUntilDate;
-
-          const dates = rule.all(); // Get all occurrences based on the rule.
-
-          dates.forEach((date: any) => {
-            const instanceStart = new Date(
-              date.setHours(eventStart.getHours(), eventStart.getMinutes())
-            ); // Calculate instance start time.
-            const instanceEnd = new Date(
-              date.setHours(
-                new Date(event.end.dateTime).getHours(),
-                new Date(event.end.dateTime).getMinutes()
-              )
-            ); // Calculate instance end time.
-
-            updateEventTimes(instanceStart, instanceEnd); // Update earliest and latest times.
-
-            const isCancelled = cancelledEvents.some((cancelledEvent) => {
-              const cancelledStart = new Date(
-                cancelledEvent.originalStartTime.dateTime
-              );
-              return (
-                isSameDateTime(cancelledStart, instanceStart) &&
-                cancelledEvent.recurringEventId === event.id
-              );
-            });
-
-            if (isCancelled) {
-              return; // Skip cancelled instances.
-            }
-
-            const updatedInstance = exceptionEvents.find((updatedEvent) => {
-              const updatedStart = new Date(
-                updatedEvent.originalStartTime.dateTime
-              ); // Parse updated event start date.
-              return (
-                isSameDateTime(updatedStart, instanceStart) &&
-                updatedEvent.recurringEventId === event.id
-              ); // Check if instance is updated.
-            });
-
-            if (updatedInstance) {
-              storedEvents.push(createCalendarEvent(updatedInstance)); // Create calendar event for updated instance.
-            } else {
-              storedEvents.push(
-                createCalendarEvent(event, instanceStart, instanceEnd)
-              ); // Create calendar event for instance.
-            }
-          });
-        });
-
-        // Process non-recurring events.
-        events.forEach((event) => {
-          if (!event.recurrence && !event.recurringEventId) {
-            const eventStart = new Date(event.start.dateTime); // Parse event start date.
-            const eventEnd = new Date(event.end.dateTime); // Parse event end date.
-
-            updateEventTimes(eventStart, eventEnd); // Update earliest and latest times.
-
-            storedEvents.push(createCalendarEvent(event)); // Create calendar event for non-recurring event.
-          }
-        });
-
-        // Filter all calendar events for the current day.
-        const eventsToday = storedEvents.filter((event: any) => {
-          const startDateTime = new Date(event.meta.startTime).toISOString();
-          const endDateTime = new Date(event.meta.endTime).toISOString();
-
-          const isToday =
-            (startDateTime >= todayStart && startDateTime <= todayEnd) ||
-            (endDateTime >= todayStart && endDateTime <= todayEnd);
-
-          const isClass = event.meta.eventType === "Class";
-
-          const isNotCancelled = event.meta.isDeleted !== "cancelled";
-
-          return isToday && isClass && isNotCancelled;
-        });
-
-        // Store the event ids.
-        const eventIdsToday = eventsToday.map(
-          (event: any) => event.meta.event_id
-        );
-
-        // Fetch all attendance registers.
-        const { data: attendanceTaken, error } = await supabase
-          .from("Attendance_Register")
-          .select("event_Id")
-          .gte("created_at", todayStart)
-          .lte("created_at", todayEnd);
-
-        // Display an error message if attendance registers could not be fetched.
-        if (error) {
-          console.error("Error fetching attendance registers:", error);
-        }
-
-        // Store all event ids from the attendance registers.
-        const attendanceIds = attendanceTaken?.map(
-          (attendance: any) => attendance.event_Id
-        );
-
-        // Find event ids that are not in the attendance registers.
-        const missingEventIds = eventIdsToday.filter(
-          (eventId: string) => !attendanceIds?.includes(eventId)
-        );
-
-        await Promise.all(
-          missingEventIds.map(async (missingEventId: any) => {
-            const missingEvent = eventsToday.find(
-              (event: any) => event.meta.event_id === missingEventId
-            );
-
-            const teacherEmail = missingEvent.meta.teacherEmail;
-            const teacherName = missingEvent.meta.teacherName;
-
-            if (!eventsByTeacher[teacherEmail]) {
-              eventsByTeacher[teacherEmail] = { name: teacherName, events: [] };
-            }
-
-            eventsByTeacher[teacherEmail].events.push(missingEvent);
-
-            // Process each teachers' information.
-            const { data: teacherID, error: teacherIDError } = await supabase
-              .from("profiles")
-              .select("id")
-              .eq("email_address", teacherEmail)
-              .single();
-
-            if (teacherIDError) {
-              console.error(
-                `Error fetching teacher ID for ${teacherEmail}:`,
-                teacherIDError
-              );
-            } else {
-              // Store the teacher's id.
-              eventsByTeacher[teacherEmail].id = teacherID?.id;
-            }
-          })
-        );
-      };
-
     const eventData = await eventRes.json();
     console.log("processing events");
-    await processEvents(eventData);
-
+    await processEvents(eventData,supabase);
 
     const formatTime = (
       dateString: string | number | Date,
@@ -294,7 +54,7 @@ const handler = async (req: Request): Promise<Response> => {
         hour: "numeric",
         minute: "numeric",
         hour12: true,
-        timeZone: timeZone,
+        timeZone: timeZone
       };
       return date.toLocaleTimeString("en-US", options);
     };
@@ -307,7 +67,7 @@ const handler = async (req: Request): Promise<Response> => {
         const options: Intl.DateTimeFormatOptions = {
           year: "numeric",
           month: "long",
-          day: "numeric",
+          day: "numeric"
         };
         return date.toLocaleDateString("en-US", options);
       };
@@ -366,7 +126,7 @@ const handler = async (req: Request): Promise<Response> => {
     console.log(eventsByTeacher);
     for (const [
       teacherEmail,
-      { name: teacherName, events: teacherEvents, id: teacherID },
+      { name: teacherName, events: teacherEvents, id: teacherID }
     ] of Object.entries(eventsByTeacher)) {
       const emailContent = formatNewSubjectTableAsHTML(teacherEvents);
 
@@ -406,29 +166,275 @@ const handler = async (req: Request): Promise<Response> => {
         body: emailContent,
         profile_Id: teacherID,
         Notification_Name: "No Attendance",
-        is_read: false,
+        is_read: false
       });
 
       const send = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${resendApiKey}`,
+          Authorization: `Bearer ${resendApiKey}`
         },
         body: JSON.stringify({
           from: senderEmail,
           to: teacherEmail,
           subject: "Roll Call - Attendance Missing",
-          html: htmlContent,
-        }),
+          html: htmlContent
+        })
       });
+      console.log(send)
     }
 
-      return new Response("Processing complete", { status: 200 });
-    } catch (error) {
-      console.error("Error:", error);
-      return new Response("Internal Server Error", { status: 500 });
+    return new Response("Processing complete", { status: 200 });
+  } catch (error) {
+    console.error("Error:", error);
+    return new Response("Internal Server Error", { status: 500 });
+  }
+};
+
+ // Create a calendar event object.
+ const createCalendarEvent = (
+  event: any,
+  start?: Date,
+  end?: Date
+): CalendarEvent => {
+  start = start ?? new Date(event.start.dateTime);
+  end = end ?? new Date(event.end.dateTime);
+
+  updateEventTimes(start, end);
+
+  return {
+    start: start ?? new Date(event.start.dateTime),
+    end: end ?? new Date(event.end.dateTime),
+    title: event.summary ?? "",
+    meta: {
+      location: event.location ?? "",
+      teacherName:
+        event.extendedProperties?.private?.teacher?.split("|")[1] ?? "",
+      teacherEmail:
+        event.extendedProperties?.private?.teacher?.split("|")[0] ?? "",
+      subjects: event.extendedProperties?.private?.subject ?? "",
+      grade: event.extendedProperties?.private?.grade ?? "",
+      event_id: event.id ?? "",
+      event_title: event.summary ?? "",
+      event_type: event.extendedProperties?.private?.eventType ?? "",
+      isRecurring: event.recurrence ? true : false,
+      capacity: event.extendedProperties?.private?.capacity ?? "",
+      isDeleted: event.status === "cancelled" ? true : false,
+      originalStartDate: event.start.dateTime,
+      originalEndDate: event.end.dateTime,
+      instanceDate: start ?? new Date(event.start.dateTime),
+      attendees: event.attendees
+        ? event.attendees.map((attendee: any) => ({
+            email: attendee.email,
+            name: attendee.displayName,
+            responseStatus: attendee.responseStatus
+          }))
+        : [],
+      startTime: start ?? new Date(event.start.dateTime),
+      endTime: end ?? new Date(event.end.dateTime),
+      eventType: event.extendedProperties.private.eventType ?? "",
+      originalEvent: event,
+      timeZone: event.end.timeZone,
+      gradeName: event.extendedProperties.private.grade
     }
   };
+};
+
+    // Update earliest and latest event times.
+    const updateEventTimes = (start: Date, end: Date): void => {
+      const eventStartTime = start.getHours(); // Get event start hour.
+      const eventEndTime = end.getHours(); // Get event end hour.
+      if (eventStartTime < earliestStartTime) {
+        earliestStartTime = eventStartTime; // Update earliest start time if necessary.
+      }
+      if (eventEndTime > latestEndTime) {
+        latestEndTime = eventEndTime; // Update latest end time if necessary.
+      }
+    };
+
+    
+    // Check if two dates have the same date and time.
+    const isSameDateTime = (date1: Date, date2: Date): boolean => {
+      return (
+        date1.getFullYear() === date2.getFullYear() &&
+        date1.getMonth() === date2.getMonth() &&
+        date1.getDate() === date2.getDate() &&
+        date1.getHours() === date2.getHours() &&
+        date1.getMinutes() === date2.getMinutes()
+      );
+    };
+
+    const processEvents = async (events: any[],supabase): Promise<void> => {
+      console.log(events.length);
+      const recurringEvents = events.filter((event) => event.recurrence); // Filter recurring events.
+      const exceptionEvents = events.filter(
+        (event) => event.recurringEventId && event.status !== "cancelled"
+      ); // Filter exception events.
+      const cancelledEvents = events.filter(
+        (event) => event.status === "cancelled" && event.recurringEventId
+      ); // Filter cancelled events.
+
+      const oneMonthBack = subMonths(new Date(), 1);
+      const sixMonthsForward = addMonths(new Date(), 6);
+
+      recurringEvents.forEach((event) => {
+        const eventStart = new Date(event.start.dateTime);
+        const ruleString = event.recurrence[0];
+        const rule = new RRule({
+          ...RRule.parseString(ruleString),
+          dtstart: eventStart < oneMonthBack ? oneMonthBack : eventStart, // Use oneMonthBack only if eventStart is earlier than oneMonthBack
+          until: sixMonthsForward
+        });
+
+        // Override the `until` date if it exists in the rule itself and is before the sixMonthsForward limit
+        const ruleOptions = RRule.parseString(ruleString);
+        const ruleUntilDate = ruleOptions.until;
+
+        const finalUntilDate =
+          ruleUntilDate && ruleUntilDate < sixMonthsForward
+            ? ruleUntilDate
+            : sixMonthsForward;
+        rule.options.until = finalUntilDate;
+
+        const dates = rule.all(); // Get all occurrences based on the rule.
+
+        dates.forEach((date: any) => {
+          const instanceStart = new Date(
+            date.setHours(eventStart.getHours(), eventStart.getMinutes())
+          ); // Calculate instance start time.
+          const instanceEnd = new Date(
+            date.setHours(
+              new Date(event.end.dateTime).getHours(),
+              new Date(event.end.dateTime).getMinutes()
+            )
+          ); // Calculate instance end time.
+
+          updateEventTimes(instanceStart, instanceEnd); // Update earliest and latest times.
+
+          const isCancelled = cancelledEvents.some((cancelledEvent) => {
+            const cancelledStart = new Date(
+              cancelledEvent.originalStartTime.dateTime
+            );
+            return (
+              isSameDateTime(cancelledStart, instanceStart) &&
+              cancelledEvent.recurringEventId === event.id
+            );
+          });
+
+          if (isCancelled) {
+            return; // Skip cancelled instances.
+          }
+
+          const updatedInstance = exceptionEvents.find((updatedEvent) => {
+            const updatedStart = new Date(
+              updatedEvent.originalStartTime.dateTime
+            ); // Parse updated event start date.
+            return (
+              isSameDateTime(updatedStart, instanceStart) &&
+              updatedEvent.recurringEventId === event.id
+            ); // Check if instance is updated.
+          });
+
+          if (updatedInstance) {
+            storedEvents.push(createCalendarEvent(updatedInstance)); // Create calendar event for updated instance.
+          } else {
+            storedEvents.push(
+              createCalendarEvent(event, instanceStart, instanceEnd)
+            ); // Create calendar event for instance.
+          }
+        });
+      });
+
+      // Process non-recurring events.
+      events.forEach((event) => {
+        if (!event.recurrence && !event.recurringEventId) {
+          const eventStart = new Date(event.start.dateTime); // Parse event start date.
+          const eventEnd = new Date(event.end.dateTime); // Parse event end date.
+
+          updateEventTimes(eventStart, eventEnd); // Update earliest and latest times.
+
+          storedEvents.push(createCalendarEvent(event)); // Create calendar event for non-recurring event.
+        }
+      });
+
+      // Filter all calendar events for the current day.
+      const eventsToday = storedEvents.filter((event: any) => {
+        const startDateTime = new Date(event.meta.startTime).toISOString();
+        const endDateTime = new Date(event.meta.endTime).toISOString();
+
+        const isToday =
+          (startDateTime >= todayStart && startDateTime <= todayEnd) ||
+          (endDateTime >= todayStart && endDateTime <= todayEnd);
+
+        const isClass = event.meta.eventType === "Class";
+
+        const isNotCancelled = event.meta.isDeleted !== "cancelled";
+
+        return isToday && isClass && isNotCancelled;
+      });
+
+      // Store the event ids.
+      const eventIdsToday = eventsToday.map(
+        (event: any) => event.meta.event_id
+      );
+
+      // Fetch all attendance registers.
+      const { data: attendanceTaken, error } = await supabase
+        .from("Attendance_Register")
+        .select("event_Id")
+        .gte("created_at", todayStart)
+        .lte("created_at", todayEnd);
+
+      // Display an error message if attendance registers could not be fetched.
+      if (error) {
+        console.error("Error fetching attendance registers:", error);
+      }
+
+      // Store all event ids from the attendance registers.
+      const attendanceIds = attendanceTaken?.map(
+        (attendance: any) => attendance.event_Id
+      );
+
+      // Find event ids that are not in the attendance registers.
+      const missingEventIds = eventIdsToday.filter(
+        (eventId: string) => !attendanceIds?.includes(eventId)
+      );
+
+      await Promise.all(
+        missingEventIds.map(async (missingEventId: any) => {
+          const missingEvent = eventsToday.find(
+            (event: any) => event.meta.event_id === missingEventId
+          );
+
+          const teacherEmail = missingEvent.meta.teacherEmail;
+          const teacherName = missingEvent.meta.teacherName;
+
+          if (!eventsByTeacher[teacherEmail]) {
+            eventsByTeacher[teacherEmail] = { name: teacherName, events: [] };
+          }
+
+          eventsByTeacher[teacherEmail].events.push(missingEvent);
+
+          // Process each teachers' information.
+          const { data: teacherID, error: teacherIDError } = await supabase
+            .from("profiles")
+            .select("id")
+            .eq("email_address", teacherEmail)
+            .single();
+
+          if (teacherIDError) {
+            console.error(
+              `Error fetching teacher ID for ${teacherEmail}:`,
+              teacherIDError
+            );
+          } else {
+            // Store the teacher's id.
+            eventsByTeacher[teacherEmail].id = teacherID?.id;
+          }
+        })
+      );
+    };
+
 
 Deno.serve(handler);
